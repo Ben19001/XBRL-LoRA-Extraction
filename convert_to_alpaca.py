@@ -1,10 +1,6 @@
 from datasets import load_dataset, concatenate_datasets
 import json
 
-"""
-Convert the FINER-139 dataset to Alpaca format for Lora fine-tuning.
-Run in Google colab environment. Writing all of these examples to a json file takes a lot of RAM!
-"""
 
 _LABELS = [
     "O",
@@ -289,54 +285,54 @@ _LABELS = [
 ]
 
 
-alpaca_entries = []
 
 ds = load_dataset("nlpaueb/finer-139", revision="refs/convert/parquet")
-full_dataset = concatenate_datasets([ds["train"], ds["test"], ds["validation"]])
-for example in full_dataset: #each example is dictionary with id, tokens, and ner_tags
-  input_text = " ".join(example["tokens"])
-  answer_text = "No XBRL tags found"
+# full_dataset = concatenate_datasets([ds["train"], ds["test"], ds["validation"]])
+for dataset_type, dataset in ds.items():
+  alpaca_entries = []
+  for example in dataset: #each example is dictionary with id, tokens, and ner_tags
+    input_text = " ".join(example["tokens"])
+    answer_text = "No XBRL tags found"
 
+    answers = []
+    current_label = None
+    current_entity_tokens = []
 
-  answers = []
-  current_label = None
-  current_entity_tokens = []
+    for token, tag in zip(example["tokens"], example["ner_tags"]):
+      label = _LABELS[tag]
+      if label.startswith("B-"):
+        if current_label is not None: #handles edge case of back to back beginning tokens
+          entity_text = " ".join(current_entity_tokens)
+          answers.append(f"{current_label}: {entity_text}")
 
-  for token, tag in zip(example["tokens"], example["ner_tags"]):
-    label = _LABELS[tag]
-    if label.startswith("B-"):
-      if current_label is not None: #handles edge case of back to back beginning tokens
-        entity_text = " ".join(current_entity_tokens)
-        answers.append(f"{current_label}: {entity_text}")
+        current_label = label[2:]
+        current_entity_tokens = [token]
+      elif label.startswith("I-"):
+        current_entity_tokens.append(token) #assumes current_entity tokens is not none
+      else:
+        if current_label is not None:
+          entity_text = " ".join(current_entity_tokens)
+          answers.append(f"{current_label}: {entity_text}")
+          current_label = None
 
-      current_label = label[2:]
-      current_entity_tokens = [token]
-    elif label.startswith("I-"):
-      current_entity_tokens.append(token) #assumes current_entity tokens is not none
-    else:
-      if current_label is not None:
-        entity_text = " ".join(current_entity_tokens)
-        answers.append(f"{current_label}: {entity_text}")
-        current_label = None
+    if current_label is not None: #save any entry that was cut off because sentence ended
+      entity_text = " ".join(current_entity_tokens)
+      answers.append(f"{current_label}: {entity_text}")
 
-  if current_label is not None: #save any entry that was cut off because sentence ended
-    entity_text = " ".join(current_entity_tokens)
-    answers.append(f"{current_label}: {entity_text}")
+    if len(answers) > 0:
+      answer_text = "\n".join(answers)
+    
+    alpaca_row = {
+      "instruction": "Extract all financial numeric entities and their corresponding XBRL tags from the following text.",
+      "input": input_text,
+      "output": answer_text
+    }
 
-  if len(answers) > 0:
-    answer_text = "\n".join(answers)
-  
-  alpaca_row = {
-    "instruction": "Extract all financial numeric entities and their corresponding XBRL tags from the following text.",
-    "input": input_text,
-    "output": answer_text
-  }
+    alpaca_entries.append(alpaca_row)
 
-  alpaca_entries.append(alpaca_row)
-
-
-with open("alpaca_data.json", "w", encoding="utf-8") as f:
-    json.dump(alpaca_entries, f, indent=2, ensure_ascii=False)
+  file_name = f"{dataset_type}.json"
+  with open(file_name, "w", encoding="utf-8") as f:
+      json.dump(alpaca_entries, f, indent=2, ensure_ascii=False)
   
 
 
